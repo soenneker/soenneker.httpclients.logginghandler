@@ -6,7 +6,7 @@ namespace Soenneker.HttpClients.LoggingHandler;
 /// <summary>
 /// Options for <see cref="HttpClientLoggingHandler"/>.
 /// </summary>
-public class HttpClientLoggingOptions
+public sealed class HttpClientLoggingOptions
 {
     /// <summary>Max number of characters to read from a body. 
     /// Use a negative or int.MaxValue for “unlimited.”</summary>
