@@ -18,6 +18,10 @@ public sealed class HttpClientLoggingOptions
     /// <summary>Whether to log request/response bodies.</summary>
     public bool LogBodies { get; set; } = true;
 
+    public bool LogRequestHeaders { get; set; } = true;
+
+    public bool LogResponseHeaders { get; set; } = true;
+
     /// <summary>Minimum level for logging headers and status.</summary>
     public LogLevel LogLevel { get; set; } = LogLevel.Information;
 }

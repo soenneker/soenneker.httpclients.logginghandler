@@ -35,13 +35,15 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     {
         var sw = Stopwatch.StartNew();
 
-        // request line
         _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, request.RequestUri);
 
-        // request headers (including content headers if present)
-        LogHeaders("→", request.Headers);
-        if (request.Content != null)
-            LogHeaders("→", request.Content.Headers);
+        if (_opts.LogRequestHeaders)
+        {
+            // request headers (including content headers if present)
+            LogHeaders("→", request.Headers);
+            if (request.Content != null)
+                LogHeaders("→", request.Content.Headers);
+        }
 
         // request body
         if (_opts.LogBodies && request.Content != null)
@@ -64,10 +66,14 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         _logger.Log(_opts.LogLevel, "← {StatusCode} in {Elapsed}ms for {Method} {Uri}", response.StatusCode, sw.ElapsedMilliseconds, request.Method,
             request.RequestUri);
 
-        // response headers
-        LogHeaders("←", response.Headers);
-        if (response.Content != null)
-            LogHeaders("←", response.Content.Headers);
+        if (_opts.LogResponseHeaders)
+        {
+            // response headers
+            LogHeaders("←", response.Headers);
+
+            if (response.Content != null)
+                LogHeaders("←", response.Content.Headers);
+        }
 
         // response body
         if (_opts.LogBodies && response.Content != null)
