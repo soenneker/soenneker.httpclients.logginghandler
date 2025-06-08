@@ -15,15 +15,9 @@ using System.Threading.Tasks;
 namespace Soenneker.HttpClients.LoggingHandler;
 
 /// <summary>
-/// A delegating handler that logs HTTP request and response details, including headers and optionally bodies,  for
-/// diagnostic and debugging purposes.
+/// A delegating handler that logs HTTP request and response details, including headers and optionally bodies,  
+/// for diagnostic and debugging purposes.
 /// </summary>
-/// <remarks>This handler logs HTTP requests and responses using the provided <see cref="ILogger"/> instance.  It
-/// supports configurable options for logging headers, redacting sensitive information, and truncating  large request or
-/// response bodies. The handler can be used to inspect HTTP traffic in applications  for debugging or monitoring
-/// purposes.  To use this handler, add it to the <see cref="HttpClient"/> pipeline by wrapping it around other handlers
-/// or directly assigning it to the <see cref="HttpClient"/> instance.  Thread safety: This handler is thread-safe and
-/// can be used in concurrent scenarios.</remarks>
 public sealed class HttpClientLoggingHandler : DelegatingHandler
 {
     private readonly ILogger _logger;
@@ -41,16 +35,19 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     {
         var sw = Stopwatch.StartNew();
 
-        // Log request line
+        // request line
         _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, request.RequestUri);
 
+        // request headers (including content headers if present)
         LogHeaders("→", request.Headers);
+        if (request.Content != null)
+            LogHeaders("→", request.Content.Headers);
 
+        // request body
         if (_opts.LogBodies && request.Content != null)
             await LogBody("→", request.Content, ct).NoSync();
 
         HttpResponseMessage response;
-
         try
         {
             response = await base.SendAsync(request, ct).NoSync();
@@ -63,11 +60,16 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
 
         sw.Stop();
+        // status line
         _logger.Log(_opts.LogLevel, "← {StatusCode} in {Elapsed}ms for {Method} {Uri}", response.StatusCode, sw.ElapsedMilliseconds, request.Method,
             request.RequestUri);
 
+        // response headers
         LogHeaders("←", response.Headers);
+        if (response.Content != null)
+            LogHeaders("←", response.Content.Headers);
 
+        // response body
         if (_opts.LogBodies && response.Content != null)
             await LogBody("←", response.Content, ct).NoSync();
 
@@ -76,15 +78,17 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
 
     private void LogHeaders(string arrow, HttpHeaders headers)
     {
-        foreach (KeyValuePair<string, IEnumerable<string>> header in headers)
+        foreach (var header in headers)
         {
-            // string.Join allocates one string per header value set
             string value;
-
             if (_redactions.Contains(header.Key))
+            {
                 value = "***";
+            }
             else
-                value = _redactions.ToCommaSeparatedString(true);
+            {
+                value = header.Value.ToCommaSeparatedString(true);
+            }
 
             _logger.Log(_opts.LogLevel, "{Arrow} Header {Key}: {Value}", arrow, header.Key, value);
         }
@@ -94,19 +98,23 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     {
         try
         {
-            // Read stream with a 4 KiB pooled buffer
-            await using Stream stream = await content.ReadAsStreamAsync(ct).NoSync();
+            // buffer entire payload into memory
+            await content.LoadIntoBufferAsync(ct).NoSync();
+
+            // get a seekable stream
+            var stream = await content.ReadAsStreamAsync(ct).NoSync();
+            stream.Seek(0, SeekOrigin.Begin);
 
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-
             string body = await reader.ReadToEndAsync(ct).NoSync();
 
             if (_opts.MaxBodyLogLength >= 0 && body.Length > _opts.MaxBodyLogLength)
-            {
                 body = body.Substring(0, _opts.MaxBodyLogLength) + "...(truncated)";
-            }
 
             _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, body);
+
+            // rewind for downstream
+            stream.Seek(0, SeekOrigin.Begin);
         }
         catch (Exception ex)
         {
