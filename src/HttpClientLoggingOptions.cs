@@ -15,8 +15,9 @@ public sealed class HttpClientLoggingOptions
     /// <summary>Headers to redact (e.g. Authorization).</summary>
     public List<string>? RedactedHeaders { get; set; }
 
-    /// <summary>Whether to log request/response bodies.</summary>
-    public bool LogBodies { get; set; } = true;
+    public bool LogRequestBody { get; set; } = true;
+
+    public bool LogResponseBody { get; set; } = true;
 
     public bool LogRequestHeaders { get; set; } = true;
 

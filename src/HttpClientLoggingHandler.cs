@@ -1,5 +1,6 @@
 ﻿using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.Enumerable.String;
+using Soenneker.Extensions.Stream;
 using Soenneker.Extensions.Task;
 using Soenneker.Extensions.ValueTask;
 using System;
@@ -46,10 +47,11 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
 
         // request body
-        if (_opts.LogBodies && request.Content != null)
+        if (_opts.LogRequestBody && request.Content != null)
             await LogBody("→", request.Content, ct).NoSync();
 
         HttpResponseMessage response;
+
         try
         {
             response = await base.SendAsync(request, ct).NoSync();
@@ -75,8 +77,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
                 LogHeaders("←", response.Content.Headers);
         }
 
-        // response body
-        if (_opts.LogBodies && response.Content != null)
+        if (_opts.LogResponseBody && response.Content != null)
             await LogBody("←", response.Content, ct).NoSync();
 
         return response;
@@ -84,9 +85,10 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
 
     private void LogHeaders(string arrow, HttpHeaders headers)
     {
-        foreach (var header in headers)
+        foreach (KeyValuePair<string, IEnumerable<string>> header in headers)
         {
             string value;
+
             if (_redactions.Contains(header.Key))
             {
                 value = "***";
@@ -108,8 +110,8 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
             await content.LoadIntoBufferAsync(ct).NoSync();
 
             // get a seekable stream
-            var stream = await content.ReadAsStreamAsync(ct).NoSync();
-            stream.Seek(0, SeekOrigin.Begin);
+            Stream stream = await content.ReadAsStreamAsync(ct).NoSync();
+            stream.ToStart();
 
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
             string body = await reader.ReadToEndAsync(ct).NoSync();
@@ -120,7 +122,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
             _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, body);
 
             // rewind for downstream
-            stream.Seek(0, SeekOrigin.Begin);
+            stream.ToStart();
         }
         catch (Exception ex)
         {
