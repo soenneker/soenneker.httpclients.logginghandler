@@ -35,18 +35,15 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-
         _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, request.RequestUri);
 
         if (_opts.LogRequestHeaders)
         {
-            // request headers (including content headers if present)
             LogHeaders("→", request.Headers);
-            if (request.Content != null)
+            if (request.Content?.Headers != null)
                 LogHeaders("→", request.Content.Headers);
         }
 
-        // request body
         if (_opts.LogRequestBody && request.Content != null)
             await LogBody("→", request.Content, ct).NoSync();
 
@@ -64,16 +61,14 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
 
         sw.Stop();
-        // status line
-        _logger.Log(_opts.LogLevel, "← {StatusCode} in {Elapsed}ms for {Method} {Uri}", response.StatusCode, sw.ElapsedMilliseconds, request.Method,
-            request.RequestUri);
+        _logger.Log(_opts.LogLevel, "← {StatusCode} in {Elapsed}ms for {Method} {Uri}",
+            response.StatusCode, sw.ElapsedMilliseconds, request.Method, request.RequestUri);
 
         if (_opts.LogResponseHeaders)
         {
-            // response headers
             LogHeaders("←", response.Headers);
 
-            if (response.Content != null)
+            if (response.Content?.Headers != null)
                 LogHeaders("←", response.Content.Headers);
         }
 
@@ -85,18 +80,11 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
 
     private void LogHeaders(string arrow, HttpHeaders headers)
     {
-        foreach (KeyValuePair<string, IEnumerable<string>> header in headers)
+        foreach (var header in headers)
         {
-            string value;
-
-            if (_redactions.Contains(header.Key))
-            {
-                value = "***";
-            }
-            else
-            {
-                value = header.Value.ToCommaSeparatedString(true);
-            }
+            string value = _redactions.Contains(header.Key)
+                ? "***"
+                : header.Value.ToCommaSeparatedString(true);
 
             _logger.Log(_opts.LogLevel, "{Arrow} Header {Key}: {Value}", arrow, header.Key, value);
         }
@@ -106,10 +94,10 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     {
         try
         {
-            // buffer entire payload into memory
+            // Ensure downstream can still read (and request content isn't consumed).
             await content.LoadIntoBufferAsync(ct).NoSync();
 
-            // get a seekable stream
+            // Get a seekable stream (after LoadIntoBufferAsync this should be seekable)
             Stream stream = await content.ReadAsStreamAsync(ct).NoSync();
             stream.ToStart();
 
@@ -121,7 +109,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
 
             _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, body);
 
-            // rewind for downstream
+            // Rewind for downstream
             stream.ToStart();
         }
         catch (Exception ex)
