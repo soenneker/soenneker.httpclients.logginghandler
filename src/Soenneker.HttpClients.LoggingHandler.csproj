@@ -46,6 +46,6 @@
         <PackageReference Include="Microsoft.Extensions.Options" Version="9.0.10" />
         <PackageReference Include="Soenneker.Extensions.Enumerable.String" Version="3.0.1208" />
         <PackageReference Include="Soenneker.Extensions.Stream" Version="4.0.93" />
-        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="3.0.95" />
+        <PackageReference Include="Soenneker.Extensions.ValueTask" Version="4.0.96" />
     </ItemGroup>
 </Project>
