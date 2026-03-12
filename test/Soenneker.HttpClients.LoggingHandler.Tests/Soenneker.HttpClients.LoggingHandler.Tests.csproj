@@ -27,7 +27,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\..\src\Soenneker.HttpClients.LoggingHandler.csproj" />
+        <ProjectReference Include="..\..\src\Soenneker.HttpClients.LoggingHandler\Soenneker.HttpClients.LoggingHandler.csproj" />
     </ItemGroup>
 
     <ItemGroup>
