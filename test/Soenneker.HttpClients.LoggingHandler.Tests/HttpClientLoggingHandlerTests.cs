@@ -1,17 +1,16 @@
-﻿using Soenneker.Tests.FixturedUnit;
-using Xunit;
+using Soenneker.Tests.HostedUnit;
 
 namespace Soenneker.HttpClients.LoggingHandler.Tests;
 
-[Collection("Collection")]
-public sealed class HttpClientLoggingHandlerTests : FixturedUnitTest
+[ClassDataSource<Host>(Shared = SharedType.PerTestSession)]
+public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
 {
 
-    public HttpClientLoggingHandlerTests(Fixture fixture, ITestOutputHelper output) : base(fixture, output)
+    public HttpClientLoggingHandlerTests(Host host) : base(host)
     {
     }
 
-    [Fact]
+    [Test]
     public void Default()
     {
 
