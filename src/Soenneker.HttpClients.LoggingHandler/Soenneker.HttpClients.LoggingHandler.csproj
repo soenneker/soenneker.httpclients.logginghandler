@@ -47,6 +47,6 @@
         <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
         <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.10" />
         <PackageReference Include="Soenneker.Extensions.Enumerable.String" Version="4.0.1390" />
-        <PackageReference Include="Soenneker.Extensions.Stream" Version="4.0.132" />
+        <PackageReference Include="Soenneker.Extensions.Stream" Version="4.0.133" />
     </ItemGroup>
 </Project>
