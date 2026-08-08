@@ -4,6 +4,7 @@ using Soenneker.Extensions.Stream;
 using Soenneker.Extensions.Task;
 using Soenneker.Extensions.ValueTask;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -32,7 +33,15 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         _redactions = new HashSet<string>(_opts.RedactedHeaders ?? [], StringComparer.OrdinalIgnoreCase);
     }
 
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        if (!_logger.IsEnabled(_opts.LogLevel))
+            return base.SendAsync(request, ct);
+
+        return SendAndLog(request, ct);
+    }
+
+    private async Task<HttpResponseMessage> SendAndLog(HttpRequestMessage request, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
         _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, request.RequestUri);
@@ -94,18 +103,59 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     {
         try
         {
-            // Ensure downstream can still read (and request content isn't consumed).
-            await content.LoadIntoBufferAsync(ct).NoSync();
+            int limit = _opts.MaxBodyLogLength;
+            long? contentLength = content.Headers.ContentLength;
 
-            // Get a seekable stream (after LoadIntoBufferAsync this should be seekable)
+            if (limit >= 0 && contentLength > ((long) limit * 4) + 4)
+            {
+                _logger.Log(_opts.LogLevel, "{Arrow} Body: (not buffered; {Length} bytes exceeds the logging limit)", arrow, contentLength);
+                return;
+            }
+
             Stream stream = await content.ReadAsStreamAsync(ct).NoSync();
+
+            // Unknown non-seekable content cannot be sampled without consuming bytes needed downstream.
+            // Buffer only bodies whose declared size is within the configured logging limit.
+            if (!stream.CanSeek)
+            {
+                if (contentLength is null || limit < 0)
+                {
+                    _logger.Log(_opts.LogLevel, "{Arrow} Body: (not logged; non-seekable content has no safe bounded length)", arrow);
+                    return;
+                }
+
+                await content.LoadIntoBufferAsync(ct).NoSync();
+                stream = await content.ReadAsStreamAsync(ct).NoSync();
+            }
+
             stream.ToStart();
 
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-            string body = await reader.ReadToEndAsync(ct).NoSync();
+            if (limit < 0)
+            {
+                string completeBody = await reader.ReadToEndAsync(ct).NoSync();
+                _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, completeBody);
+                stream.ToStart();
+                return;
+            }
 
-            if (_opts.MaxBodyLogLength >= 0 && body.Length > _opts.MaxBodyLogLength)
-                body = body.Substring(0, _opts.MaxBodyLogLength) + "...(truncated)";
+            int charactersToRead = limit == int.MaxValue ? int.MaxValue : limit + 1;
+            char[] rented = ArrayPool<char>.Shared.Rent(Math.Max(1, charactersToRead));
+            string body;
+
+            try
+            {
+                int read = await reader.ReadAsync(rented.AsMemory(0, charactersToRead), ct).NoSync();
+                bool truncated = limit >= 0 && read > limit;
+                int bodyLength = truncated ? limit : read;
+                body = new string(rented, 0, bodyLength);
+                if (truncated)
+                    body += "...(truncated)";
+            }
+            finally
+            {
+                ArrayPool<char>.Shared.Return(rented);
+            }
 
             _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, body);
 
