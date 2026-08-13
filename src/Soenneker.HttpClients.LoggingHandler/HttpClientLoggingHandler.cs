@@ -112,26 +112,28 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
                 return;
             }
 
+            // Buffer before requesting the content stream. Asking HttpContent for its stream first can transfer
+            // ownership of a network response stream and make a subsequent buffering attempt fail with
+            // "The stream was already consumed."
+            if (contentLength is not null || limit >= 0)
+            {
+                await content.LoadIntoBufferAsync(ct).NoSync();
+            }
+
             Stream stream = await content.ReadAsStreamAsync(ct).NoSync();
 
-            // Unknown non-seekable content cannot be sampled without consuming bytes needed downstream.
-            // Buffer only bodies whose declared size is within the configured logging limit.
             if (!stream.CanSeek)
             {
-                if (contentLength is null || limit < 0)
-                {
-                    _logger.Log(_opts.LogLevel, "{Arrow} Body: (not logged; non-seekable content has no safe bounded length)", arrow);
-                    return;
-                }
-
-                await content.LoadIntoBufferAsync(ct).NoSync();
-                stream = await content.ReadAsStreamAsync(ct).NoSync();
+                _logger.Log(_opts.LogLevel, "{Arrow} Body: (not logged; non-seekable content has no safe bounded length)", arrow);
+                return;
             }
 
             stream.ToStart();
 
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-            if (limit < 0)
+            // int.MaxValue is documented as unlimited. Do not pass it to ArrayPool.Rent: arrays cannot
+            // have that many elements, so even a tiny body would produce an OutOfMemoryException.
+            if (limit < 0 || limit == int.MaxValue)
             {
                 string completeBody = await reader.ReadToEndAsync(ct).NoSync();
                 _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, completeBody);
