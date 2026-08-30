@@ -7,6 +7,8 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System;
+using System.Collections.Generic;
 
 namespace Soenneker.HttpClients.LoggingHandler.Tests;
 
@@ -69,6 +71,25 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         logger.Exception.Should().BeNull();
     }
 
+    [Test]
+    public async Task Defaults_hide_sensitive_headers_queries_and_bodies()
+    {
+        var logger = new EnabledLogger();
+        var loggingHandler = new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions())
+        {
+            InnerHandler = new RequestBodyCapturingHandler()
+        };
+
+        using var client = new HttpClient(loggingHandler);
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "header-secret");
+        using var content = new StringContent("body-secret", Encoding.UTF8, "text/plain");
+        using HttpResponseMessage response = await client.PostAsync("https://example.test/path?token=query-secret", content);
+
+        logger.Messages.Should().NotContain(message => message.Contains("header-secret", StringComparison.Ordinal));
+        logger.Messages.Should().NotContain(message => message.Contains("query-secret", StringComparison.Ordinal));
+        logger.Messages.Should().NotContain(message => message.Contains("body-secret", StringComparison.Ordinal));
+    }
+
     private sealed class StreamingResponseHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -117,12 +138,14 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
     private sealed class EnabledLogger : ILogger
     {
         public System.Exception? Exception { get; private set; }
+        public List<string> Messages { get; } = [];
 
         public bool IsEnabled(LogLevel logLevel) => true;
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, System.Exception? exception,
             System.Func<TState, System.Exception?, string> formatter)
         {
             Exception ??= exception;
+            Messages.Add(formatter(state, exception));
         }
         public System.IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
     }

@@ -8,22 +8,34 @@ namespace Soenneker.HttpClients.LoggingHandler;
 /// </summary>
 public sealed class HttpClientLoggingOptions
 {
-    /// <summary>Max number of characters to read from a body. 
-    /// Use a negative or int.MaxValue for “unlimited.”</summary>
-    public int MaxBodyLogLength { get; set; } = int.MaxValue;
+    /// <summary>Maximum number of characters to log from a body. A negative value or <see cref="int.MaxValue"/> removes the limit.</summary>
+    public int MaxBodyLogLength { get; set; } = 4096;
 
-    /// <summary>Headers to redact (e.g. Authorization).</summary>
-    public List<string>? RedactedHeaders { get; set; }
+    /// <summary>Header names whose values are replaced with <c>***</c>.</summary>
+    public List<string>? RedactedHeaders { get; set; } =
+    [
+        "Authorization",
+        "Proxy-Authorization",
+        "Cookie",
+        "Set-Cookie",
+        "X-Api-Key",
+        "Api-Key"
+    ];
 
     /// <summary>
     /// Gets or sets a value indicating whether log request body.
     /// </summary>
-    public bool LogRequestBody { get; set; } = true;
+    public bool LogRequestBody { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether log response body.
     /// </summary>
-    public bool LogResponseBody { get; set; } = true;
+    public bool LogResponseBody { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether request query strings are included in log messages.
+    /// </summary>
+    public bool LogQueryString { get; set; }
 
     /// <summary>
     /// Gets or sets a value indicating whether log request headers.

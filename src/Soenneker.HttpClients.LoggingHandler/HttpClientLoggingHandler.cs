@@ -44,7 +44,8 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     private async Task<HttpResponseMessage> SendAndLog(HttpRequestMessage request, CancellationToken ct)
     {
         var sw = Stopwatch.StartNew();
-        _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, request.RequestUri);
+        string requestTarget = GetRequestTarget(request.RequestUri);
+        _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, requestTarget);
 
         if (_opts.LogRequestHeaders)
         {
@@ -65,13 +66,13 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         catch (Exception ex)
         {
             sw.Stop();
-            _logger.LogError(ex, "✗ {Method} {Uri} failed after {Elapsed}ms", request.Method, request.RequestUri, sw.ElapsedMilliseconds);
+            _logger.LogError(ex, "✗ {Method} {Uri} failed after {Elapsed}ms", request.Method, requestTarget, sw.ElapsedMilliseconds);
             throw;
         }
 
         sw.Stop();
         _logger.Log(_opts.LogLevel, "← {StatusCode} in {Elapsed}ms for {Method} {Uri}",
-            response.StatusCode, sw.ElapsedMilliseconds, request.Method, request.RequestUri);
+            response.StatusCode, sw.ElapsedMilliseconds, request.Method, requestTarget);
 
         if (_opts.LogResponseHeaders)
         {
@@ -82,9 +83,32 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
 
         if (_opts.LogResponseBody && response.Content != null)
-            await LogBody("←", response.Content, ct).NoSync();
+        {
+            try
+            {
+                await LogBody("←", response.Content, ct).NoSync();
+            }
+            catch
+            {
+                response.Dispose();
+                throw;
+            }
+        }
 
         return response;
+    }
+
+    private string GetRequestTarget(Uri? uri)
+    {
+        if (uri is null || _opts.LogQueryString)
+            return uri?.ToString() ?? string.Empty;
+
+        if (uri.IsAbsoluteUri)
+            return uri.GetLeftPart(UriPartial.Path);
+
+        string value = uri.ToString();
+        int suffixStart = value.IndexOfAny(['?', '#']);
+        return suffixStart < 0 ? value : value[..suffixStart];
     }
 
     private void LogHeaders(string arrow, HttpHeaders headers)
@@ -163,6 +187,10 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
 
             // Rewind for downstream
             stream.ToStart();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

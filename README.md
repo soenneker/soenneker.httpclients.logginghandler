@@ -1,11 +1,12 @@
 [![](https://img.shields.io/nuget/v/soenneker.httpclients.logginghandler.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.httpclients.logginghandler/)
+[![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.httpclients.logginghandler/build-and-test.yml?style=for-the-badge)](https://github.com/soenneker/soenneker.httpclients.logginghandler/actions/workflows/build-and-test.yml)
 [![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.httpclients.logginghandler/publish-package.yml?style=for-the-badge)](https://github.com/soenneker/soenneker.httpclients.logginghandler/actions/workflows/publish-package.yml)
 [![](https://img.shields.io/nuget/dt/soenneker.httpclients.logginghandler.svg?style=for-the-badge)](https://www.nuget.org/packages/soenneker.httpclients.logginghandler/)
 [![](https://img.shields.io/github/actions/workflow/status/soenneker/soenneker.httpclients.logginghandler/codeql.yml?label=CodeQL&style=for-the-badge)](https://github.com/soenneker/soenneker.httpclients.logginghandler/actions/workflows/codeql.yml)
 
 # Soenneker.HttpClients.LoggingHandler
 
-A delegating handler that logs HTTP request and response details, including headers and optionally bodies, for diagnostic and debugging purposes.
+A delegating handler for structured HTTP request, response, timing, header, and optional body logs.
 
 ## Install
 
@@ -13,19 +14,55 @@ A delegating handler that logs HTTP request and response details, including head
 dotnet add package Soenneker.HttpClients.LoggingHandler
 ```
 
-## What you get
+## Configure with `IHttpClientFactory`
 
-- `HttpClientLoggingHandler` — A delegating handler that logs HTTP request and response details, including headers and optionally bodies, for diagnostic and debugging purposes.
-- `HttpClientLoggingOptions` — Options for `HttpClientLoggingHandler`.
+```csharp
+using Microsoft.Extensions.Logging;
+using Soenneker.HttpClients.LoggingHandler;
 
-## API at a glance
+var options = new HttpClientLoggingOptions
+{
+    LogLevel = LogLevel.Debug,
+    LogRequestHeaders = true,
+    LogResponseHeaders = true,
+    LogRequestBody = false,
+    LogResponseBody = false
+};
 
-| API | What it does | Result / important behavior |
-| --- | --- | --- |
-| `HttpClientLoggingOptions.MaxBodyLogLength` | Max number of characters to read from a body. Use a negative or int.MaxValue for “unlimited.”. | Max number of characters to read from a body. Use a negative or int.MaxValue for “unlimited.”. |
-| `HttpClientLoggingOptions.RedactedHeaders` | Headers to redact (e.g. Authorization). | Headers to redact (e.g. Authorization). |
-| `HttpClientLoggingOptions.LogRequestBody` | Gets or sets a value indicating whether log request body. | Gets or sets a value indicating whether log request body. |
-| `HttpClientLoggingOptions.LogResponseBody` | Gets or sets a value indicating whether log response body. | Gets or sets a value indicating whether log response body. |
-| `HttpClientLoggingOptions.LogRequestHeaders` | Gets or sets a value indicating whether log request headers. | Gets or sets a value indicating whether log request headers. |
-| `HttpClientLoggingOptions.LogResponseHeaders` | Gets or sets a value indicating whether log response headers. | Gets or sets a value indicating whether log response headers. |
-| `HttpClientLoggingOptions.LogLevel` | Minimum level for logging headers and status. | Minimum level for logging headers and status. |
+services.AddHttpClient("catalog", client =>
+{
+    client.BaseAddress = new Uri("https://api.example.com/");
+})
+.AddHttpMessageHandler(serviceProvider =>
+    new HttpClientLoggingHandler(
+        serviceProvider.GetRequiredService<ILogger<HttpClientLoggingHandler>>(),
+        options));
+```
+
+The handler logs the method, path, status code, and elapsed time. Header logging is enabled by default. Request and response bodies and query strings are disabled by default because they commonly contain credentials or personal data.
+
+## Redaction and body limits
+
+The default redaction list covers `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key`, and `Api-Key`. Replace or extend `RedactedHeaders` before constructing the handler for application-specific secrets.
+
+```csharp
+var options = new HttpClientLoggingOptions
+{
+    LogResponseBody = true,
+    MaxBodyLogLength = 8_192,
+    RedactedHeaders =
+    [
+        "Authorization",
+        "Cookie",
+        "Set-Cookie",
+        "X-Api-Key",
+        "X-Tenant-Token"
+    ]
+};
+```
+
+`MaxBodyLogLength` defaults to 4,096 characters. A negative value or `int.MaxValue` removes the limit and can buffer arbitrarily large content; use that only with payload sizes you control.
+
+Body inspection rewinds seekable content so downstream consumers can still read it. Content with no safely bounded, seekable representation is skipped. A body-read failure is logged as a warning and does not fail the HTTP call, but caller-requested cancellation still propagates.
+
+Set `LogQueryString = true` only when query parameters are known not to contain secrets. URI query values and body fields are not selectively redacted: when enabled, they are logged as supplied.
