@@ -43,7 +43,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
 
     private async Task<HttpResponseMessage> SendAndLog(HttpRequestMessage request, CancellationToken ct)
     {
-        var sw = Stopwatch.StartNew();
+        long startTimestamp = Stopwatch.GetTimestamp();
         string requestTarget = GetRequestTarget(request.RequestUri);
         _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, requestTarget);
 
@@ -65,14 +65,14 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
         catch (Exception ex)
         {
-            sw.Stop();
-            _logger.LogError(ex, "✗ {Method} {Uri} failed after {Elapsed}ms", request.Method, requestTarget, sw.ElapsedMilliseconds);
+            long elapsedMilliseconds = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
+            _logger.LogError(ex, "✗ {Method} {Uri} failed after {Elapsed}ms", request.Method, requestTarget, elapsedMilliseconds);
             throw;
         }
 
-        sw.Stop();
+        long responseElapsedMilliseconds = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
         _logger.Log(_opts.LogLevel, "← {StatusCode} in {Elapsed}ms for {Method} {Uri}",
-            response.StatusCode, sw.ElapsedMilliseconds, request.Method, requestTarget);
+            response.StatusCode, responseElapsedMilliseconds, request.Method, requestTarget);
 
         if (_opts.LogResponseHeaders)
         {
@@ -107,7 +107,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
             return uri.GetLeftPart(UriPartial.Path);
 
         string value = uri.ToString();
-        int suffixStart = value.IndexOfAny(['?', '#']);
+        int suffixStart = value.AsSpan().IndexOfAny('?', '#');
         return suffixStart < 0 ? value : value[..suffixStart];
     }
 
@@ -174,9 +174,9 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
                 int read = await reader.ReadAsync(rented.AsMemory(0, charactersToRead), ct).NoSync();
                 bool truncated = limit >= 0 && read > limit;
                 int bodyLength = truncated ? limit : read;
-                body = new string(rented, 0, bodyLength);
-                if (truncated)
-                    body += "...(truncated)";
+                body = truncated
+                    ? string.Concat(rented.AsSpan(0, bodyLength), "...(truncated)")
+                    : new string(rented, 0, bodyLength);
             }
             finally
             {
