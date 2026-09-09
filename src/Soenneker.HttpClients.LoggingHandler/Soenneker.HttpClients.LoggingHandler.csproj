@@ -45,7 +45,7 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.12" />
-        <PackageReference Include="Soenneker.Extensions.Enumerable.String" Version="4.0.1443" />
+        <PackageReference Include="Soenneker.Extensions.Enumerable.String" Version="4.0.1444" />
         <PackageReference Include="Soenneker.Extensions.Stream" Version="4.0.148" />
     </ItemGroup>
 </Project>
