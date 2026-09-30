@@ -27,7 +27,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Response_body_logging_does_not_consume_the_downstream_stream()
+    public async ValueTask Response_body_logging_does_not_consume_the_downstream_stream()
     {
         var logger = new EnabledLogger();
         var loggingHandler = new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
@@ -48,7 +48,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Unlimited_request_body_logging_does_not_rent_a_maximum_length_array()
+    public async ValueTask Unlimited_request_body_logging_does_not_rent_a_maximum_length_array()
     {
         var logger = new EnabledLogger();
         var innerHandler = new RequestBodyCapturingHandler();
@@ -72,7 +72,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
     }
 
     [Test]
-    public async Task Defaults_hide_sensitive_headers_queries_and_bodies()
+    public async ValueTask Defaults_hide_sensitive_headers_queries_and_bodies()
     {
         var logger = new EnabledLogger();
         var loggingHandler = new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions())
