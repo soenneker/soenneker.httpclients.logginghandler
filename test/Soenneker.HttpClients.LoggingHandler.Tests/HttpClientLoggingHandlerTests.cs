@@ -27,7 +27,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
     }
 
     [Test]
-    public async ValueTask Response_body_logging_does_not_consume_the_downstream_stream()
+    public async ValueTask Response_body_logging_does_not_consume_the_downstream_stream(CancellationToken cancellationToken)
     {
         var logger = new EnabledLogger();
         var loggingHandler = new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
@@ -40,15 +40,15 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         };
 
         using var client = new HttpClient(loggingHandler);
-        using HttpResponseMessage response = await client.GetAsync("https://example.test");
-        string body = await response.Content.ReadAsStringAsync();
+        using HttpResponseMessage response = await client.GetAsync("https://example.test", cancellationToken: cancellationToken);
+        string body = await response.Content.ReadAsStringAsync(cancellationToken: cancellationToken);
 
         body.Should().Be("response body");
         logger.Exception.Should().BeNull();
     }
 
     [Test]
-    public async ValueTask Unlimited_request_body_logging_does_not_rent_a_maximum_length_array()
+    public async ValueTask Unlimited_request_body_logging_does_not_rent_a_maximum_length_array(CancellationToken cancellationToken)
     {
         var logger = new EnabledLogger();
         var innerHandler = new RequestBodyCapturingHandler();
@@ -65,14 +65,14 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
 
         using var client = new HttpClient(loggingHandler);
         using var content = new StringContent("request body", Encoding.UTF8, "text/plain");
-        using HttpResponseMessage response = await client.PostAsync("https://example.test", content);
+        using HttpResponseMessage response = await client.PostAsync("https://example.test", content, cancellationToken: cancellationToken);
 
         innerHandler.Body.Should().Be("request body");
         logger.Exception.Should().BeNull();
     }
 
     [Test]
-    public async ValueTask Defaults_hide_sensitive_headers_queries_and_bodies()
+    public async ValueTask Defaults_hide_sensitive_headers_queries_and_bodies(CancellationToken cancellationToken)
     {
         var logger = new EnabledLogger();
         var loggingHandler = new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions())
@@ -83,7 +83,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         using var client = new HttpClient(loggingHandler);
         client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "header-secret");
         using var content = new StringContent("body-secret", Encoding.UTF8, "text/plain");
-        using HttpResponseMessage response = await client.PostAsync("https://example.test/path?token=query-secret", content);
+        using HttpResponseMessage response = await client.PostAsync("https://example.test/path?token=query-secret", content, cancellationToken: cancellationToken);
 
         logger.Messages.Should().NotContain(message => message.Contains("header-secret", StringComparison.Ordinal));
         logger.Messages.Should().NotContain(message => message.Contains("query-secret", StringComparison.Ordinal));
