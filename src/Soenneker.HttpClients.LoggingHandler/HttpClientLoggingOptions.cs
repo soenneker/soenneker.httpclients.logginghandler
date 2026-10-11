@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using System.Collections.Generic;
 
 namespace Soenneker.HttpClients.LoggingHandler;
@@ -8,7 +8,7 @@ namespace Soenneker.HttpClients.LoggingHandler;
 /// </summary>
 public sealed class HttpClientLoggingOptions
 {
-    /// <summary>Maximum number of characters to log from a body. A negative value or <see cref="int.MaxValue"/> removes the limit.</summary>
+    /// <summary>Maximum number of characters to log from a body. Limited previews are captured as the body is consumed and logged when the preview fills, the body completes, or content is disposed. A negative value or <see cref="int.MaxValue"/> removes the limit.</summary>
     public int MaxBodyLogLength { get; set; } = 4096;
 
     /// <summary>Header names whose values are replaced with <c>***</c>.</summary>

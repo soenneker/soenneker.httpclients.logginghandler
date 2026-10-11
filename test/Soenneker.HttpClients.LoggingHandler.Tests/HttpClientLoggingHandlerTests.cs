@@ -90,6 +90,70 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         logger.Messages.Should().NotContain(message => message.Contains("body-secret", StringComparison.Ordinal));
     }
 
+    [Test]
+    [Arguments(null)]
+    [Arguments(16L)]
+    [Arguments(1048576L)]
+    public async ValueTask Limited_logging_does_not_buffer_large_responses(long? declaredLength, CancellationToken cancellationToken)
+    {
+        var logger = new EnabledLogger();
+        var content = new LargeStreamingContent(declaredLength);
+        using var client = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
+        {
+            LogResponseBody = true,
+            MaxBodyLogLength = 16
+        }) { InnerHandler = new ContentResponseHandler(content) });
+
+        using (HttpResponseMessage response = await client.GetAsync("https://example.test", HttpCompletionOption.ResponseHeadersRead, cancellationToken))
+        {
+            content.BytesWritten.Should().Be(0);
+            response.Content.Headers.ContentLength.Should().Be(declaredLength);
+            // Copying to a sink exercises serialization without introducing caller-side buffering.
+            await response.Content.CopyToAsync(Stream.Null, cancellationToken);
+            content.BytesWritten.Should().Be(LargeStreamingContent.BodyLength);
+            logger.Messages.Should().Contain(message => message == "← Body: xxxxxxxxxxxxxxxx...(truncated)");
+            logger.Exception.Should().BeNull();
+        }
+        content.Disposed.Should().BeTrue();
+    }
+
+    [Test]
+    public async ValueTask Limited_request_logging_preserves_the_complete_body(CancellationToken cancellationToken)
+    {
+        var logger = new EnabledLogger();
+        var innerHandler = new RequestBodyCapturingHandler();
+        using var client = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
+        {
+            LogRequestBody = true,
+            MaxBodyLogLength = 16
+        }) { InnerHandler = innerHandler });
+        using var content = new LargeStreamingContent(null);
+        using HttpResponseMessage response = await client.PostAsync("https://example.test", content, cancellationToken);
+        innerHandler.Body.Should().Be(new string('x', LargeStreamingContent.BodyLength));
+        logger.Messages.Should().Contain(message => message == "→ Body: xxxxxxxxxxxxxxxx...(truncated)");
+        logger.Exception.Should().BeNull();
+    }
+    [Test]
+    [Arguments(0)]
+    [Arguments(16)]
+    public async ValueTask Stream_preview_preserves_short_reads_and_unicode(int limit, CancellationToken cancellationToken)
+    {
+        var logger = new EnabledLogger();
+        string body = new string('é', 1024 * 1024);
+        using var source = new CountingReadStream(Encoding.UTF8.GetBytes(body));
+        using var client = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
+        {
+            LogResponseBody = true,
+            MaxBodyLogLength = limit
+        }) { InnerHandler = new ContentResponseHandler(new StreamContent(source)) });
+        using HttpResponseMessage response = await client.GetAsync("https://example.test", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        source.BytesRead.Should().Be(0);
+        using var reader = new StreamReader(stream);
+        (await reader.ReadToEndAsync(cancellationToken)).Should().Be(body);
+        logger.Messages.Should().Contain(message => message == $"← Body: {new string('é', limit)}...(truncated)");
+        logger.Exception.Should().BeNull();
+    }
     private sealed class StreamingResponseHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

@@ -63,6 +63,6 @@ var options = new HttpClientLoggingOptions
 
 `MaxBodyLogLength` defaults to 4,096 characters. A negative value or `int.MaxValue` removes the limit and can buffer arbitrarily large content; use that only with payload sizes you control.
 
-Body inspection rewinds seekable content so downstream consumers can still read it. Content with no safely bounded, seekable representation is skipped. A body-read failure is logged as a warning and does not fail the HTTP call, but caller-requested cancellation still propagates.
+Limited body logging captures a bounded prefix as the transport or caller consumes the content, without eagerly reading or buffering it. The preview is logged when its byte budget fills, consumption completes, or the content is disposed. The complete body remains available downstream, including for non-seekable streams and unknown content lengths. Explicitly unlimited logging buffers and rewinds the complete body.
 
 Set `LogQueryString = true` only when query parameters are known not to contain secrets. URI query values and body fields are not selectively redacted: when enabled, they are logged as supplied.

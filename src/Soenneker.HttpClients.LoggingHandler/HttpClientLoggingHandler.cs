@@ -1,10 +1,9 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using Soenneker.Extensions.Enumerable.String;
 using Soenneker.Extensions.Stream;
 using Soenneker.Extensions.Task;
 using Soenneker.Extensions.ValueTask;
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -55,7 +54,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
 
         if (_opts.LogRequestBody && request.Content != null)
-            await LogBody("→", request.Content, ct).NoSync();
+            request.Content = await PrepareBodyLogging("→", request.Content, ct).NoSync();
 
         HttpResponseMessage response;
 
@@ -86,7 +85,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         {
             try
             {
-                await LogBody("←", response.Content, ct).NoSync();
+                response.Content = await PrepareBodyLogging("←", response.Content, ct).NoSync();
             }
             catch
             {
@@ -123,70 +122,32 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
     }
 
-    private async ValueTask LogBody(string arrow, HttpContent content, CancellationToken ct)
+    private async ValueTask<HttpContent> PrepareBodyLogging(string arrow, HttpContent content, CancellationToken ct)
     {
+        int limit = _opts.MaxBodyLogLength;
+        if (limit >= 0 && limit != int.MaxValue)
+        {
+            // Observe only bytes that the transport or caller actually consumes. In particular, do not
+            // ask HttpContent to buffer a response just to produce a short diagnostic preview.
+            return new BodyLoggingContent(content, new BodyLogCapture(_logger, _opts.LogLevel, arrow, limit));
+        }
+
+        // Unlimited logging is an explicit opt-in to buffering the complete body.
         try
         {
-            int limit = _opts.MaxBodyLogLength;
-            long? contentLength = content.Headers.ContentLength;
-
-            if (limit >= 0 && contentLength > ((long) limit * 4) + 4)
-            {
-                _logger.Log(_opts.LogLevel, "{Arrow} Body: (not buffered; {Length} bytes exceeds the logging limit)", arrow, contentLength);
-                return;
-            }
-
-            // Buffer before requesting the content stream. Asking HttpContent for its stream first can transfer
-            // ownership of a network response stream and make a subsequent buffering attempt fail with
-            // "The stream was already consumed."
-            if (contentLength is not null || limit >= 0)
-            {
-                await content.LoadIntoBufferAsync(ct).NoSync();
-            }
-
+            await content.LoadIntoBufferAsync(ct).NoSync();
             Stream stream = await content.ReadAsStreamAsync(ct).NoSync();
-
-            if (!stream.CanSeek)
-            {
-                _logger.Log(_opts.LogLevel, "{Arrow} Body: (not logged; non-seekable content has no safe bounded length)", arrow);
-                return;
-            }
-
             stream.ToStart();
-
-            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-            // int.MaxValue is documented as unlimited. Do not pass it to ArrayPool.Rent: arrays cannot
-            // have that many elements, so even a tiny body would produce an OutOfMemoryException.
-            if (limit < 0 || limit == int.MaxValue)
-            {
-                string completeBody = await reader.ReadToEndAsync(ct).NoSync();
-                _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, completeBody);
-                stream.ToStart();
-                return;
-            }
-
-            int charactersToRead = limit == int.MaxValue ? int.MaxValue : limit + 1;
-            char[] rented = ArrayPool<char>.Shared.Rent(Math.Max(1, charactersToRead));
-            string body;
-
             try
             {
-                int read = await reader.ReadAsync(rented.AsMemory(0, charactersToRead), ct).NoSync();
-                bool truncated = limit >= 0 && read > limit;
-                int bodyLength = truncated ? limit : read;
-                body = truncated
-                    ? string.Concat(rented.AsSpan(0, bodyLength), "...(truncated)")
-                    : new string(rented, 0, bodyLength);
+                using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+                string body = await reader.ReadToEndAsync(ct).NoSync();
+                _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, body);
             }
             finally
             {
-                ArrayPool<char>.Shared.Return(rented);
+                stream.ToStart();
             }
-
-            _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, body);
-
-            // Rewind for downstream
-            stream.ToStart();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -196,5 +157,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         {
             _logger.LogWarning(ex, "{Arrow} Failed to read body", arrow);
         }
+
+        return content;
     }
 }
