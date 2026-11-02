@@ -154,6 +154,37 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         logger.Messages.Should().Contain(message => message == $"← Body: {new string('é', limit)}...(truncated)");
         logger.Exception.Should().BeNull();
     }
+    [Test]
+    [Arguments(1024)]
+    [Arguments(int.MaxValue)]
+    [Arguments(-1)]
+    public async ValueTask Body_logs_escape_terminal_controls_without_changing_transmitted_content(int limit, CancellationToken cancellationToken)
+    {
+        const string body = "before\a\0\u001b[31m\u009bafter\r\n\tUnicode: é";
+        const string escaped = "before\\u0007\\u0000\\u001b[31m\\u009bafter\r\n\tUnicode: é";
+        var logger = new EnabledLogger();
+        var transport = new RequestBodyCapturingHandler();
+        using var requestClient = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
+        {
+            LogRequestBody = true,
+            MaxBodyLogLength = limit
+        }) { InnerHandler = transport });
+        using var content = new StringContent(body, Encoding.UTF8, "text/plain");
+        using HttpResponseMessage uploaded = await requestClient.PostAsync("https://example.test", content, cancellationToken);
+        transport.Body.Should().Be(body);
+        logger.Messages.Should().Contain(message => message == $"→ Body: {escaped}");
+
+        using var responseClient = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
+        {
+            LogResponseBody = true,
+            MaxBodyLogLength = limit
+        }) { InnerHandler = new ContentResponseHandler(new StringContent(body, Encoding.UTF8, "text/plain")) });
+        using HttpResponseMessage downloaded = await responseClient.GetAsync("https://example.test", cancellationToken);
+        (await downloaded.Content.ReadAsStringAsync(cancellationToken)).Should().Be(body);
+        logger.Messages.Should().Contain(message => message == $"← Body: {escaped}");
+        logger.Exception.Should().BeNull();
+    }
+
     private sealed class StreamingResponseHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

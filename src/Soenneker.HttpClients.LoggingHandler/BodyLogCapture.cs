@@ -36,7 +36,7 @@ internal sealed class BodyLogCapture(ILogger logger, LogLevel level, string arro
             string body = text.Length > characterLimit
                 ? string.Concat(text.AsSpan(0, characterLimit), "...(truncated)")
                 : text;
-            logger.Log(level, "{Arrow} Body: {Body}", arrow, body);
+            logger.Log(level, "{Arrow} Body: {Body}", arrow, BodyLogText.EscapeControls(body));
         }
         catch (Exception ex)
         {

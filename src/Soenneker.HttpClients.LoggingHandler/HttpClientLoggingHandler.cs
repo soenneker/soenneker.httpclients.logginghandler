@@ -142,7 +142,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
             {
                 using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
                 string body = await reader.ReadToEndAsync(ct).NoSync();
-                _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, body);
+                _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, BodyLogText.EscapeControls(body));
             }
             finally
             {
