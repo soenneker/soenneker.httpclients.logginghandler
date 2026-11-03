@@ -31,7 +31,10 @@ internal sealed class BodyLoggingStream(Stream inner, BodyLogCapture capture, bo
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
         ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+        capture.IsCompleted ? inner.ReadAsync(buffer, cancellationToken) : ReadAndCaptureAsync(buffer, cancellationToken);
+
+    private async ValueTask<int> ReadAndCaptureAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
         int read = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
         capture.Append(buffer.Span[..read]);
@@ -51,7 +54,10 @@ internal sealed class BodyLoggingStream(Stream inner, BodyLogCapture capture, bo
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
         WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+        capture.IsCompleted ? inner.WriteAsync(buffer, cancellationToken) : WriteAndCaptureAsync(buffer, cancellationToken);
+
+    private async ValueTask WriteAndCaptureAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
     {
         await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
         capture.Append(buffer.Span);

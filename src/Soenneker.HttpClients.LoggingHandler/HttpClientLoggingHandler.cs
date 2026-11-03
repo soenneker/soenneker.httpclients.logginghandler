@@ -44,17 +44,17 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
     {
         long startTimestamp = Stopwatch.GetTimestamp();
         string requestTarget = GetRequestTarget(request.RequestUri);
-        _logger.Log(_opts.LogLevel, "→ {Method} {Uri}", request.Method, requestTarget);
+        HttpLog.Request(_logger, _opts.LogLevel, request.Method, requestTarget);
 
         if (_opts.LogRequestHeaders)
         {
-            LogHeaders("→", request.Headers);
+            LogHeaders("->", request.Headers);
             if (request.Content?.Headers != null)
-                LogHeaders("→", request.Content.Headers);
+                LogHeaders("->", request.Content.Headers);
         }
 
         if (_opts.LogRequestBody && request.Content != null)
-            request.Content = await PrepareBodyLogging("→", request.Content, ct).NoSync();
+            request.Content = await PrepareBodyLogging("->", request.Content, ct).NoSync();
 
         HttpResponseMessage response;
 
@@ -65,27 +65,26 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         catch (Exception ex)
         {
             long elapsedMilliseconds = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-            _logger.LogError(ex, "✗ {Method} {Uri} failed after {Elapsed}ms", request.Method, requestTarget, elapsedMilliseconds);
+            HttpLog.Failure(_logger, ex, request.Method, requestTarget, elapsedMilliseconds);
             throw;
         }
 
         long responseElapsedMilliseconds = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
-        _logger.Log(_opts.LogLevel, "← {StatusCode} in {Elapsed}ms for {Method} {Uri}",
-            response.StatusCode, responseElapsedMilliseconds, request.Method, requestTarget);
+        HttpLog.Response(_logger, _opts.LogLevel, response.StatusCode, responseElapsedMilliseconds, request.Method, requestTarget);
 
         if (_opts.LogResponseHeaders)
         {
-            LogHeaders("←", response.Headers);
+            LogHeaders("<-", response.Headers);
 
             if (response.Content?.Headers != null)
-                LogHeaders("←", response.Content.Headers);
+                LogHeaders("<-", response.Content.Headers);
         }
 
         if (_opts.LogResponseBody && response.Content != null)
         {
             try
             {
-                response.Content = await PrepareBodyLogging("←", response.Content, ct).NoSync();
+                response.Content = await PrepareBodyLogging("<-", response.Content, ct).NoSync();
             }
             catch
             {
@@ -118,20 +117,46 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
                 ? "***"
                 : header.Value.ToCommaSeparatedString(true);
 
-            _logger.Log(_opts.LogLevel, "{Arrow} Header {Key}: {Value}", arrow, header.Key, value);
+            HttpLog.Header(_logger, _opts.LogLevel, arrow, header.Key, value);
         }
     }
 
-    private async ValueTask<HttpContent> PrepareBodyLogging(string arrow, HttpContent content, CancellationToken ct)
+    private static bool IsTextContent(string? mediaType)
     {
+        if (mediaType is null)
+            return false;
+
+        return mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+            || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
+            || mediaType.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/javascript", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private ValueTask<HttpContent> PrepareBodyLogging(string arrow, HttpContent content, CancellationToken ct)
+    {
+        string? mediaType = content.Headers.ContentType?.MediaType;
+        if (!IsTextContent(mediaType) || content.Headers.ContentEncoding.Count > 0)
+        {
+            HttpLog.Omitted(_logger, _opts.LogLevel, arrow, mediaType ?? "unknown", content.Headers.ContentLength);
+            return new ValueTask<HttpContent>(content);
+        }
+
         int limit = _opts.MaxBodyLogLength;
         if (limit >= 0 && limit != int.MaxValue)
         {
             // Observe only bytes that the transport or caller actually consumes. In particular, do not
             // ask HttpContent to buffer a response just to produce a short diagnostic preview.
-            return new BodyLoggingContent(content, new BodyLogCapture(_logger, _opts.LogLevel, arrow, limit));
+            return new ValueTask<HttpContent>(new BodyLoggingContent(content, new BodyLogCapture(_logger, _opts.LogLevel, arrow, limit)));
         }
 
+        return LogUnlimitedBody(arrow, content, ct);
+    }
+
+    private async ValueTask<HttpContent> LogUnlimitedBody(string arrow, HttpContent content, CancellationToken ct)
+    {
         // Unlimited logging is an explicit opt-in to buffering the complete body.
         try
         {
@@ -142,7 +167,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
             {
                 using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
                 string body = await reader.ReadToEndAsync(ct).NoSync();
-                _logger.Log(_opts.LogLevel, "{Arrow} Body: {Body}", arrow, BodyLogText.EscapeControls(body));
+                HttpLog.Body(_logger, _opts.LogLevel, arrow, BodyLogText.EscapeControls(body));
             }
             finally
             {
@@ -155,7 +180,7 @@ public sealed class HttpClientLoggingHandler : DelegatingHandler
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "{Arrow} Failed to read body", arrow);
+            HttpLog.BodyFailure(_logger, ex, arrow);
         }
 
         return content;

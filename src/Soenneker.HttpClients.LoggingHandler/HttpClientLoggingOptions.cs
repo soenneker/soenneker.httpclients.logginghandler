@@ -23,12 +23,12 @@ public sealed class HttpClientLoggingOptions
     ];
 
     /// <summary>
-    /// Gets or sets a value indicating whether log request body.
+    /// Gets or sets whether to log request bodies with a recognized text media type and no content encoding. Binary and unknown media types are omitted.
     /// </summary>
     public bool LogRequestBody { get; set; }
 
     /// <summary>
-    /// Gets or sets a value indicating whether log response body.
+    /// Gets or sets whether to log response bodies with a recognized text media type and no content encoding. Binary and unknown media types are omitted.
     /// </summary>
     public bool LogResponseBody { get; set; }
 

@@ -98,6 +98,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
     {
         var logger = new EnabledLogger();
         var content = new LargeStreamingContent(declaredLength);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
         using var client = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
         {
             LogResponseBody = true,
@@ -111,7 +112,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
             // Copying to a sink exercises serialization without introducing caller-side buffering.
             await response.Content.CopyToAsync(Stream.Null, cancellationToken);
             content.BytesWritten.Should().Be(LargeStreamingContent.BodyLength);
-            logger.Messages.Should().Contain(message => message == "← Body: xxxxxxxxxxxxxxxx...(truncated)");
+            logger.Messages.Should().Contain(message => message == "<- Body: xxxxxxxxxxxxxxxx...(truncated)");
             logger.Exception.Should().BeNull();
         }
         content.Disposed.Should().BeTrue();
@@ -128,9 +129,10 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
             MaxBodyLogLength = 16
         }) { InnerHandler = innerHandler });
         using var content = new LargeStreamingContent(null);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
         using HttpResponseMessage response = await client.PostAsync("https://example.test", content, cancellationToken);
         innerHandler.Body.Should().Be(new string('x', LargeStreamingContent.BodyLength));
-        logger.Messages.Should().Contain(message => message == "→ Body: xxxxxxxxxxxxxxxx...(truncated)");
+        logger.Messages.Should().Contain(message => message == "-> Body: xxxxxxxxxxxxxxxx...(truncated)");
         logger.Exception.Should().BeNull();
     }
     [Test]
@@ -141,17 +143,19 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         var logger = new EnabledLogger();
         string body = new string('é', 1024 * 1024);
         using var source = new CountingReadStream(Encoding.UTF8.GetBytes(body));
+        var content = new StreamContent(source);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
         using var client = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
         {
             LogResponseBody = true,
             MaxBodyLogLength = limit
-        }) { InnerHandler = new ContentResponseHandler(new StreamContent(source)) });
+        }) { InnerHandler = new ContentResponseHandler(content) });
         using HttpResponseMessage response = await client.GetAsync("https://example.test", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         using Stream stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         source.BytesRead.Should().Be(0);
         using var reader = new StreamReader(stream);
         (await reader.ReadToEndAsync(cancellationToken)).Should().Be(body);
-        logger.Messages.Should().Contain(message => message == $"← Body: {new string('é', limit)}...(truncated)");
+        logger.Messages.Should().Contain(message => message == $"<- Body: {new string('é', limit)}...(truncated)");
         logger.Exception.Should().BeNull();
     }
     [Test]
@@ -172,7 +176,7 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         using var content = new StringContent(body, Encoding.UTF8, "text/plain");
         using HttpResponseMessage uploaded = await requestClient.PostAsync("https://example.test", content, cancellationToken);
         transport.Body.Should().Be(body);
-        logger.Messages.Should().Contain(message => message == $"→ Body: {escaped}");
+        logger.Messages.Should().Contain(message => message == $"-> Body: {escaped}");
 
         using var responseClient = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
         {
@@ -181,7 +185,62 @@ public sealed class HttpClientLoggingHandlerTests : HostedUnitTest
         }) { InnerHandler = new ContentResponseHandler(new StringContent(body, Encoding.UTF8, "text/plain")) });
         using HttpResponseMessage downloaded = await responseClient.GetAsync("https://example.test", cancellationToken);
         (await downloaded.Content.ReadAsStringAsync(cancellationToken)).Should().Be(body);
-        logger.Messages.Should().Contain(message => message == $"← Body: {escaped}");
+        logger.Messages.Should().Contain(message => message == $"<- Body: {escaped}");
+        logger.Exception.Should().BeNull();
+    }
+
+    [Test]
+    [Arguments(16)]
+    [Arguments(int.MaxValue)]
+    [Arguments(-1)]
+    public async ValueTask Binary_logging_preserves_content_without_reading_it(int limit, CancellationToken cancellationToken)
+    {
+        var logger = new EnabledLogger();
+        byte[] bytes = [0, 255, 27, 128, 65];
+        using var source = new CountingReadStream(bytes);
+        var content = new StreamContent(source);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var client = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
+        {
+            LogResponseBody = true,
+            MaxBodyLogLength = limit
+        }) { InnerHandler = new ContentResponseHandler(content) });
+
+        using HttpResponseMessage response = await client.GetAsync("https://example.test", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.Content.Should().BeSameAs(content);
+        source.BytesRead.Should().Be(0);
+        (await response.Content.ReadAsByteArrayAsync(cancellationToken)).Should().Equal(bytes);
+        logger.Messages.Should().Contain(message => message.StartsWith("<- Body omitted (Content-Type: application/octet-stream", StringComparison.Ordinal));
+        logger.Messages.Should().NotContain(message => message.Contains("Body:", StringComparison.Ordinal));
+        logger.Exception.Should().BeNull();
+    }
+
+    [Test]
+    [Arguments(65001, 0)]
+    [Arguments(65001, 1)]
+    [Arguments(65001, 4)]
+    [Arguments(1200, 4)]
+    [Arguments(1201, 4)]
+    [Arguments(12000, 4)]
+    [Arguments(12001, 4)]
+    public async ValueTask Pooled_preview_preserves_bom_detection_and_unicode(int codePage, int limit, CancellationToken cancellationToken)
+    {
+        const string body = "😀éabcdef";
+        Encoding encoding = Encoding.GetEncoding(codePage);
+        byte[] bytes = [.. encoding.GetPreamble(), .. encoding.GetBytes(body)];
+        var logger = new EnabledLogger();
+        using var source = new CountingReadStream(bytes);
+        var content = new StreamContent(source);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/plain");
+        using var client = new HttpClient(new HttpClientLoggingHandler(logger, new HttpClientLoggingOptions
+        {
+            LogResponseBody = true,
+            MaxBodyLogLength = limit
+        }) { InnerHandler = new ContentResponseHandler(content) });
+        using HttpResponseMessage response = await client.GetAsync("https://example.test", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        (await response.Content.ReadAsByteArrayAsync(cancellationToken)).Should().Equal(bytes);
+        string expected = $"<- Body: {body[..limit]}...(truncated)";
+        logger.Messages.Should().Contain(message => message == expected);
         logger.Exception.Should().BeNull();
     }
 
